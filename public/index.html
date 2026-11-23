@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <title>SoftPLC v1.7 — IEC 61131-3 Multi-Language (ST, SFC, FBD, IL, LD) & Live C-Debugger</title>
+  <style>
+    :root {
+      --bg: #0f172a; --panel: #1e293b; --border: #334155;
+      --text: #e2e8f0; --muted: #94a3b8; --accent: #38bdf8;
+      --green: #22c55e; --red: #ef4444; --amber: #f59e0b; --purple: #a78bfa; --pink: #f472b6;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+    header { height: 50px; background: #0b1120; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; padding: 0 14px; gap: 10px; }
+    .brand { font-weight: 700; color: var(--accent); font-size: 13px; white-space: nowrap; }
+    .proj-bar { display: flex; align-items: center; gap: 5px; background: #162032; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border); }
+    .proj-bar label { font-size: 11px; color: var(--muted); text-transform: uppercase; font-weight: 700; }
+    select, input.mini { background: #0f172a; color: #fff; border: 1px solid var(--border); border-radius: 4px; padding: 4px 7px; font-size: 12px; outline: none; }
+    .telemetry { display: flex; gap: 10px; font-size: 11px; font-family: monospace; white-space: nowrap; }
+    .telemetry span b { color: var(--green); }
+
+    .main { flex: 1; display: grid; grid-template-columns: 235px 1.25fr 1.1fr 0.85fr; gap: 1px; background: var(--border); overflow: hidden; }
+    .pane { background: var(--panel); display: flex; flex-direction: column; overflow: hidden; }
+    .pane-head { padding: 8px 10px; background: #162032; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; font-size: 12px; font-weight: 600; gap: 6px; }
+
+    /* CODESYS 2.3 POU Navigator Tree */
+    .tree-section { padding: 8px; border-bottom: 1px solid var(--border); }
+    .tree-title { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; }
+    .tree-item { padding: 5px 8px; border-radius: 4px; cursor: pointer; font-size: 12px; font-family: monospace; display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; color: var(--text); }
+    .tree-item:hover { background: #26354d; }
+    .tree-item.active { background: var(--accent); color: #0f172a; font-weight: 700; }
+    .tag-pou { font-size: 10px; padding: 1px 5px; border-radius: 3px; font-weight: 700; }
+    .t-prg { background: rgba(34,197,94,0.2); color: var(--green); }
+    .t-fb { background: rgba(56,189,248,0.2); color: var(--accent); }
+    .t-fun { background: rgba(167,139,250,0.2); color: var(--purple); }
+    .t-cfg { background: rgba(245,158,11,0.2); color: var(--amber); }
+
+    .create-pou-box { padding: 8px; background: #121b2b; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
+    .create-pou-row { display: flex; gap: 4px; }
+
+    textarea { flex: 1; width: 100%; background: #0b1120; color: #f8fafc; border: none; padding: 12px; font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 13px; line-height: 1.5; resize: none; outline: none; }
+    .console { height: 92px; background: #090d16; border-top: 1px solid var(--border); padding: 8px 10px; font-family: monospace; font-size: 11.5px; overflow-y: auto; color: var(--muted); white-space: pre-wrap; }
+
+    button { background: #334155; color: var(--text); border: none; padding: 5px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: 600; }
+    button:hover { filter: brightness(1.15); }
+    button.primary { background: var(--green); color: #052e16; }
+    button.danger { background: var(--red); color: #fff; }
+    button.warn { background: var(--amber); color: #000; }
+    button.info { background: #0284c7; color: #fff; }
+
+    .scroll { flex: 1; overflow-y: auto; padding: 8px; }
+    table { width: 100%; border-collapse: collapse; font-size: 11.5px; font-family: monospace; }
+    th, td { padding: 5px 6px; text-align: left; border-bottom: 1px solid var(--border); }
+    th { color: var(--muted); position: sticky; top: 0; background: var(--panel); }
+    .badge { padding: 2px 5px; border-radius: 3px; font-size: 10.5px; font-weight: 700; }
+    .b-true { background: rgba(34,197,94,0.2); color: var(--green); }
+    .b-false { background: rgba(148,163,184,0.15); color: var(--muted); }
+    .b-retain { background: rgba(167,139,250,0.2); color: var(--purple); font-size: 9.5px; margin-left: 3px; padding: 1px 4px; border-radius: 3px; }
+    .dir-IN { color: #38bdf8; } .dir-OUT { color: #f472b6; } .dir-VAR { color: #a78bfa; }
+
+    .card { background: #0f172a; border: 1px solid var(--border); border-radius: 6px; padding: 10px; margin-bottom: 10px; }
+    .card h4 { font-size: 11.5px; color: var(--muted); margin-bottom: 8px; text-transform: uppercase; }
+    .tank { height: 20px; background: #1e293b; border-radius: 4px; overflow: hidden; position: relative; margin: 6px 0; border: 1px solid var(--border); }
+    .tank-fill { height: 100%; background: linear-gradient(90deg, #0284c7, #38bdf8); transition: width 0.1s; }
+    .tank-label { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; }
+    .row-btns { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 8px; }
+    .hint { font-size: 10.5px; color: var(--muted); line-height: 1.35; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">⚡ SoftPLC v1.7 • IEC ST / SFC / FBD / IL / LD</div>
+
+    <div class="proj-bar">
+      <label>Проект:</label>
+      <select id="project-select" onchange="selectProject(this.value)"></select>
+      <button class="info" onclick="createProject()">+ Проект</button>
+      <button onclick="exportProjectZip()">⬇ Export ZIP</button>
+      <button onclick="document.getElementById('zip-input').click()">⬆ Import ZIP</button>
+      <button class="danger" onclick="deleteProject()">✕</button>
+      <input type="file" id="zip-input" accept=".zip" style="display:none" onchange="importProjectZip(event)" />
+    </div>
+
+    <div class="telemetry">
+      <span>Tick: <b id="t-seq">0</b></span>
+      <span>Scan: <b id="t-scan">0 µs</b></span>
+      <span>CPU: <b id="t-cpu">0%</b></span>
+      <span>Jitter: <b id="t-jit">0 µs</b></span>
+      <span>Ovr: <b id="t-ovr">0</b></span>
+    </div>
+  </header>
+
+  <div class="main">
+    <!-- 1. НАВИГАТОР POU И ЗАДАЧ (СТИЛЬ CODESYS 2.3) -->
+    <section class="pane">
+      <div class="pane-head">
+        <span>POU & Task Manager</span>
+      </div>
+
+      <!-- Создание нового POU: PROGRAM (PRG), FUNCTION_BLOCK (FB), FUNCTION (FUN) -->
+      <div class="create-pou-box">
+        <div class="tree-title">Новый объект POU</div>
+        <div class="create-pou-row">
+          <select id="new-pou-type" onchange="onPouTypeChange()" style="flex:1">
+            <option value="PROGRAM">PROGRAM (PRG)</option>
+            <option value="FUNCTION_BLOCK">FUNCTION_BLOCK (FB)</option>
+            <option value="FUNCTION">FUNCTION (FUN)</option>
+          </select>
+          <select id="new-pou-lang" style="width:74px;" title="Язык МЭК 61131-3">
+            <option value="ST">ST</option>
+            <option value="SFC">SFC</option>
+            <option value="FBD">FBD</option>
+            <option value="IL">IL</option>
+            <option value="LD">LD</option>
+          </select>
+          <select id="new-pou-ret" style="width:74px; display:none;" title="Тип возврата FUNCTION">
+            <option value="REAL">REAL</option>
+            <option value="BOOL">BOOL</option>
+            <option value="INT">INT</option>
+            <option value="DINT">DINT</option>
+          </select>
+        </div>
+        <div class="create-pou-row">
+          <input id="new-pou-name" class="mini" placeholder="Имя (напр. PRG_Valve)" style="flex:1" />
+          <button class="info" onclick="createPou()">+ Создать</button>
+        </div>
+        <div id="prg-task-bind-row" class="create-pou-row" style="align-items:center;">
+          <input type="checkbox" id="bind-to-task" checked />
+          <label for="bind-to-task" style="font-size:11px; color:var(--muted);">В задачу (только PRG):</label>
+          <input id="bind-task-name" class="mini" value="MainTask" style="width:82px;" />
+        </div>
+        <div class="hint">Правило CODESYS 2.3: задачи (TASK) запускают только <b>PROGRAM</b>; FB и FUN вызываются из кода.</div>
+      </div>
+
+      <div class="scroll">
+        <div class="tree-section">
+          <div class="tree-title">Файлы проекта (src/*.st)</div>
+          <div id="pou-tree"></div>
+        </div>
+
+        <div class="tree-section" style="border-bottom:none;">
+          <div class="tree-title">Привязка PRG к TASK</div>
+          <div style="display:flex; flex-direction:column; gap:5px;">
+            <input id="task-target-name" class="mini" value="MainTask" placeholder="Имя TASK" />
+            <select id="task-prg-select"></select>
+            <button onclick="bindExistingPrg()">Назначить PRG на TASK</button>
+          </div>
+          <div id="task-list" style="margin-top:8px; font-family:monospace; font-size:11px; color:var(--muted);"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. РЕДАКТОР ST И КОМПИЛЯЦИЯ -->
+    <section class="pane">
+      <div class="pane-head">
+        <span>Редактор: <code id="current-file-label" style="color:var(--accent)">-</code></span>
+        <div style="display:flex; gap:6px;">
+          <button class="danger" onclick="deleteCurrentFile()">Удалить файл</button>
+          <button class="primary" onclick="compileAndReload()">▶ Compile & Online Change</button>
+        </div>
+      </div>
+            <div id="visual-builder" style="display:none; padding:10px; background:#121b2b; border-bottom:1px solid var(--border); font-size:12px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <b id="vis-title" style="color:var(--accent)">Визуальный редактор IEC</b>
+          <div style="display:flex; gap:6px;" id="vis-actions"></div>
+        </div>
+        <div id="vis-content"></div>
+      </div>
+      <textarea id="editor" spellcheck="false"></textarea>
+      <div class="console" id="console">Готов к сборке (MatIEC → TinyCC → SharedArrayBuffer)...</div>
+    </section>
+
+    <!-- 3. ONLINE DEBUGGER C-МОДУЛЯ -->
+    <section class="pane">
+      <div class="pane-head">
+        <span>Live C-Debugger (20 Гц)</span>
+        <input id="filter" class="mini" placeholder="Фильтр тегов..." style="width:120px;" />
+      </div>
+      <div class="scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Переменная C-модуля</th>
+              <th>Класс</th>
+              <th>Тип</th>
+              <th>Значение</th>
+              <th>Force</th>
+            </tr>
+          </thead>
+          <tbody id="watch-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 4. МОДБАС TCP И ПОЛЕВОЙ СТЕНД -->
+    <section class="pane">
+      <div class="pane-head">
+        <span>Modbus TCP (:5020)</span>
+        <button onclick="sysAction('saveRetain')">💾 RETAIN</button>
+      </div>
+      <div class="scroll">
+        <div class="card">
+          <h4>Стенд: Насосная станция</h4>
+          <div style="font-size:11.5px;">Уровень в баке (HR0..1 REAL):</div>
+          <div class="tank">
+            <div class="tank-fill" id="p-level-bar" style="width:35%"></div>
+            <div class="tank-label" id="p-level-txt">35.0 %</div>
+          </div>
+          <div style="font-size:11.5px; display:flex; justify-content:space-between; margin-top:6px;">
+            <span>Темп.: <b id="p-temp">24.5 °C</b></span>
+            <span>Насос: <b id="p-pump">OFF</b></span>
+          </div>
+          <div class="row-btns">
+            <button class="primary" onmousedown="setPlant({startBtn:true})" onmouseup="setPlant({startBtn:false})">START</button>
+            <button class="warn" onmousedown="setPlant({stopBtn:true})" onmouseup="setPlant({stopBtn:false})">STOP</button>
+            <button id="btn-fault" onclick="toggleFault()">Авария: OFF</button>
+            <button onclick="setPlant({waterLevel:15})">Слить (15%)</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h4>Регистры Modbus TCP</h4>
+          <div style="font-family:monospace; font-size:10.5px; line-height:1.65;">
+            <div><b>FC02 DI [0..7]:</b> <span id="mb-di">-</span></div>
+            <div><b>FC01 Coils [0..7]:</b> <span id="mb-coils">-</span></div>
+            <div><b>FC03 HR [0..7]:</b> <span id="mb-hr">-</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    let activeProject = '';
+    let projects = [];
+    let files = [];
+    let currentFile = null;
+    let structure = { programs: [], functionBlocks: [], functions: [], tasks: [] };
+    let faultState = false;
+
+    function logMsg(text, color = '#94a3b8') {
+      const el = document.getElementById('console');
+      el.style.color = color;
+      el.textContent = text;
+    }
+
+    function onPouTypeChange() {
+      const t = document.getElementById('new-pou-type').value;
+      document.getElementById('new-pou-ret').style.display = (t === 'FUNCTION') ? 'inline-block' : 'none';
+      document.getElementById('prg-task-bind-row').style.display = (t === 'PROGRAM') ? 'flex' : 'none';
+    }
+
+    async function loadProjects() {
+      const res = await fetch('/api/projects');
+      const data = await res.json();
+      activeProject = data.activeProject;
+      projects = data.projects;
+      const sel = document.getElementById('project-select');
+      sel.innerHTML = projects.map(p => `<option value="${p}" ${p === activeProject ? 'selected' : ''}>${p}</option>`).join('');
+      await loadFiles();
+    }
+
+    async function createProject() {
+      const name = prompt('Имя нового проекта (создастся папка projects/<имя>/src):');
+      if (!name) return;
+      const res = await fetch('/api/projects/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name })
+      });
+      const data = await res.json();
+      if (!data.ok) return alert(data.error);
+      currentFile = null;
+      await loadProjects();
+      logMsg(`Создан проект: projects/${data.activeProject}/`, '#22c55e');
+    }
+
+    async function selectProject(name) {
+      const res = await fetch('/api/projects/select', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name })
+      });
+      const data = await res.json();
+      if (!data.ok) return alert(data.error);
+      currentFile = null;
+      await loadProjects();
+      if (data.compileError) {
+        logMsg(`Ошибка сборки проекта [${name}]:
+${data.compileError}`, '#ef4444');
+      } else {
+        logMsg(`Выбран проект: projects/${name}/`, '#38bdf8');
+      }
+    }
+
+    async function deleteProject() {
+      if (!confirm(`Удалить проект "${activeProject}"?`)) return;
+      const res = await fetch(`/api/projects?name=${encodeURIComponent(activeProject)}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!data.ok) return alert(data.error);
+      currentFile = null;
+      await loadProjects();
+    }
+
+    function exportProjectZip() {
+      window.location.href = `/api/projects/export?name=${encodeURIComponent(activeProject)}`;
+    }
+
+    async function importProjectZip(ev) {
+      const file = ev.target.files[0];
+      ev.target.value = '';
+      if (!file) return;
+      const baseName = file.name.replace(/\.zip$/i, '');
+      const buf = await file.arrayBuffer();
+      const res = await fetch(`/api/projects/import?name=${encodeURIComponent(baseName)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/zip' },
+        body: buf
+      });
+      const data = await res.json();
+      if (!data.ok) return alert(data.error);
+      currentFile = null;
+      await loadProjects();
+      logMsg(`Импортирован проект "${data.importedProject}" (${data.filesCount} .st файлов)`, '#22c55e');
+    }
+
+    async function loadFiles() {
+      const res = await fetch('/api/files');
+      const data = await res.json();
+      files = data.files || [];
+      structure = data.structure || { programs: [], functionBlocks: [], functions: [], tasks: [] };
+
+      if ((!currentFile || !files.some(f => f.name === currentFile)) && files.length) {
+        const mainPrg = files.find(f => f.name.includes('prg') || f.name.includes('main'));
+        currentFile = mainPrg ? mainPrg.name : files[0].name;
+      }
+      renderTree();
+      renderTaskControls();
+      renderEditor();
+    }
+
+    function detectFileBadge(content, fileName) {
+      const up = content.toUpperCase();
+      if (fileName === 'config.st' || /CONFIGURATION/.test(up)) return ['CFG', 't-cfg'];
+      if (/PROGRAM/.test(up)) return ['PRG', 't-prg'];
+      if (/FUNCTION_BLOCK/.test(up)) return ['FB', 't-fb'];
+      if (/FUNCTION/.test(up)) return ['FUN', 't-fun'];
+      return ['ST', 't-fb'];
+    }
+
+    function renderTree() {
+      const el = document.getElementById('pou-tree');
+      el.innerHTML = files.map(f => {
+        const [badgeTxt, badgeCls] = detectFileBadge(f.content, f.name);
+        const activeCls = f.name === currentFile ? 'active' : '';
+        return `<div class="tree-item ${activeCls}" onclick="selectFile('${f.name}')">
+          <span>${f.name}</span>
+          <span class="tag-pou ${badgeCls}">${badgeTxt}</span>
+        </div>`;
+      }).join('');
+    }
+
+    function renderTaskControls() {
+      const sel = document.getElementById('task-prg-select');
+      if (structure.programs.length === 0) {
+        sel.innerHTML = `<option value="">Нет доступных PROGRAM (PRG)</option>`;
+      } else {
+        sel.innerHTML = structure.programs.map(p => `<option value="${p.name}">${p.name} (PRG)</option>`).join('');
+      }
+
+      const tList = document.getElementById('task-list');
+      tList.innerHTML = structure.tasks.length
+        ? structure.tasks.map(t => `<div>• <b>${t.name}</b> (${t.params})</div>`).join('')
+        : '<div>Задачи не объявлены</div>';
+    }
+
+    function renderEditor() {
+      document.getElementById('current-file-label').textContent = currentFile ? `projects/${activeProject}/src/${currentFile}` : '-';
+      const active = files.find(f => f.name === currentFile);
+      document.getElementById('editor').value = active ? active.content : '';
+      renderVisualEditor(active);
+    }
+
+    function saveCurrentToMemory() {
+      const active = files.find(f => f.name === currentFile);
+      if (active) active.content = document.getElementById('editor').value;
+    }
+
+    function selectFile(name) {
+      saveCurrentToMemory();
+      currentFile = name;
+      renderTree();
+      renderEditor();
+    }
+
+    async function createPou() {
+      const pouType = document.getElementById('new-pou-type').value;
+      const pouLang = document.getElementById('new-pou-lang').value;
+      const name = document.getElementById('new-pou-name').value;
+      const returnType = document.getElementById('new-pou-ret').value;
+      const bindTask = (pouType === 'PROGRAM') && document.getElementById('bind-to-task').checked;
+      const taskName = document.getElementById('bind-task-name').value;
+
+      if (!name.trim()) return alert('Введите имя нового POU');
+      saveCurrentToMemory();
+      if (currentFile) {
+        const cur = files.find(f => f.name === currentFile);
+        if (cur) {
+          await fetch('/api/files', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(cur)
+          });
+        }
+      }
+
+      const res = await fetch('/api/pou/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pouType, pouLang, name, returnType, bindTask, taskName })
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        logMsg(`Ошибка создания POU: ${data.error}`, '#ef4444');
+        return alert(data.error);
+      }
+
+      document.getElementById('new-pou-name').value = '';
+      currentFile = data.fileName;
+      await loadFiles();
+      logMsg(`Создан объект ${data.pouType}: ${data.pouName} (${data.fileName})`, '#22c55e');
+    }
+
+    async function bindExistingPrg() {
+      const taskName = document.getElementById('task-target-name').value;
+      const programName = document.getElementById('task-prg-select').value;
+      if (!programName) return alert('Выберите PROGRAM (PRG)');
+
+      saveCurrentToMemory();
+      const res = await fetch('/api/task/bind', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ taskName, programName })
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        logMsg(`Ошибка привязки задачи: ${data.error}`, '#ef4444');
+        return alert(data.error);
+      }
+      await loadFiles();
+      logMsg(`Программа ${programName} назначена на задачу ${taskName} в config.st`, '#22c55e');
+    }
+
+    async function deleteCurrentFile() {
+      if (!currentFile) return;
+      if (!confirm(`Удалить файл ${currentFile}?`)) return;
+      await fetch(`/api/files?name=${encodeURIComponent(currentFile)}`, { method: 'DELETE' });
+      currentFile = null;
+      await loadFiles();
+    }
+
+    async function compileAndReload() {
+      saveCurrentToMemory();
+      logMsg(`Сохранение файлов и запуск iec2c + TinyCC...`, '#38bdf8');
+      for (const f of files) {
+        await fetch('/api/files', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(f)
+        });
+      }
+      const res = await fetch('/api/compile', { method: 'POST' });
+      const data = await res.json();
+      if (data.ok) {
+        await loadFiles();
+        logMsg('[OK] ' + data.log, '#22c55e');
+      } else {
+        logMsg('[ОШИБКА КОМПИЛЯЦИИ]
+' + data.error, '#ef4444');
+      }
+    }
+
+    async function forceVar(name, type, currentVal, isForced) {
+      if (isForced) {
+        await fetch('/api/force', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, enabled: false })
+        });
+        return;
+      }
+      let nextVal;
+      if (type === 'BOOL') {
+        nextVal = !currentVal;
+      } else {
+        const input = prompt(`Принудительное значение для ${name} (${type}):`, currentVal);
+        if (input === null) return;
+        nextVal = Number(input);
+      }
+      await fetch('/api/force', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, value: nextVal, enabled: true })
+      });
+    }
+
+    async function setPlant(patch) {
+      await fetch('/api/plant', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch)
+      });
+    }
+
+    async function toggleFault() {
+      faultState = !faultState;
+      document.getElementById('btn-fault').textContent = `Авария: ${faultState ? 'ON' : 'OFF'}`;
+      document.getElementById('btn-fault').className = faultState ? 'danger' : '';
+      await setPlant({ faultSensor: faultState });
+    }
+
+    async function sysAction(action) {
+      await fetch('/api/system', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action })
+      });
+    }
+
+    const ws = new WebSocket(`ws://${location.host}`);
+    ws.onmessage = (ev) => {
+      const { telemetry, variables, plant, modbus } = JSON.parse(ev.data);
+
+      document.getElementById('t-seq').textContent = telemetry.tickSeq;
+      document.getElementById('t-scan').textContent = telemetry.lastScanUs + ' µs';
+      document.getElementById('t-cpu').textContent = telemetry.cpuLoadPct + '%';
+      document.getElementById('t-jit').textContent = telemetry.lastJitterUs + ' µs';
+      document.getElementById('t-ovr').textContent = telemetry.overrunCount;
+
+      const q = document.getElementById('filter').value.toLowerCase();
+      const tbody = document.getElementById('watch-body');
+      tbody.innerHTML = variables
+        .filter(v => v.name.toLowerCase().includes(q))
+        .map(v => {
+          const valHtml = v.iecType === 'BOOL'
+            ? `<span class="badge ${v.value ? 'b-true' : 'b-false'}">${v.value ? 'TRUE' : 'FALSE'}</span>`
+            : `<b>${typeof v.value === 'number' && !Number.isInteger(v.value) ? v.value.toFixed(2) : v.value}</b>`;
+          const retainBadge = v.isRetain ? `<span class="b-retain">RETAIN</span>` : '';
+          return `<tr>
+            <td>${v.name} <span style="color:#64748b">@+${v.offset}</span>${retainBadge}</td>
+            <td class="dir-${v.varClass}">${v.varClass}</td>
+            <td>${v.iecType}</td>
+            <td>${valHtml}</td>
+            <td>
+              <button class="${v.forced ? 'warn' : ''}" onclick="forceVar('${v.name}','${v.iecType}',${JSON.stringify(v.value)},${v.forced})">
+                ${v.forced ? 'UNFORCE' : 'FORCE'}
+              </button>
+            </td>
+          </tr>`;
+        }).join('');
+
+      document.getElementById('p-level-bar').style.width = plant.waterLevel.toFixed(1) + '%';
+      document.getElementById('p-level-txt').textContent = plant.waterLevel.toFixed(1) + ' %';
+      document.getElementById('p-temp').textContent = plant.temperature.toFixed(1) + ' °C';
+      document.getElementById('p-pump').textContent = plant.pumpRunning ? 'ON' : 'OFF';
+      document.getElementById('p-pump').style.color = plant.pumpRunning ? '#22c55e' : '#94a3b8';
+
+      document.getElementById('mb-di').textContent = modbus.discreteInputs.join(' ');
+      document.getElementById('mb-coils').textContent = modbus.coils.join(' ');
+      document.getElementById('mb-hr').textContent = modbus.holdingRegisters.join(', ');
+    };
+
+    onPouTypeChange();
+    loadProjects();
+  </script>
+</body>
+</html>

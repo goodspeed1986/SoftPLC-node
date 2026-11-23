@@ -1,0 +1,29 @@
+{
+  "name": "softplc-runtime",
+  "version": "1.7.0",
+  "description": "Industrial IEC 61131-3 SoftPLC Runtime for Node.js — Web-IDE, Online Change, Live Debugger, Modbus TCP",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "build:toolchain": "bash scripts/build_toolchain.sh",
+    "build:toolchain:linux-x64": "bash scripts/build_toolchain.sh linux-x64",
+    "build:toolchain:docker": "docker build -t softplc-builder -f scripts/Dockerfile scripts && docker run --rm -v \"$(pwd)/bin:/out\" softplc-builder"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.16",
+    "koffi": "^2.9.0",
+    "ws": "^8.18.0"
+  },
+  "keywords": [
+    "plc",
+    "softplc",
+    "iec61131",
+    "modbus",
+    "industrial",
+    "online-change"
+  ],
+  "license": "MIT"
+}
