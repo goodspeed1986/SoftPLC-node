@@ -1,0 +1,404 @@
+# =============================================================================
+# SoftPLC toolchain CI: MatIEC (iec2c) + TinyCC (tcc)
+# Builds per-platform archives, caches sources, publishes GitHub Releases.
+#
+# Triggers:
+#   - push tags v*          → full matrix + GitHub Release
+#   - workflow_dispatch     → same (optional tag name input)
+#   - push to main (paths)  → build only (artifacts, no release)
+# =============================================================================
+name: Build Toolchain
+
+on:
+  push:
+    tags:
+      - "v*"
+    branches:
+      - main
+      - master
+    paths:
+      - "scripts/build_toolchain.sh"
+      - "scripts/build_toolchain.ps1"
+      - "scripts/Dockerfile"
+      - ".github/workflows/build-toolchain.yml"
+      - "index.js"
+      - "package.json"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Optional release tag (e.g. v1.7.1). Empty = artifacts only."
+        required: false
+        default: ""
+      platforms:
+        description: "Comma-separated targets (empty = all)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+env:
+  MATIEC_REPO: https://github.com/sm1820/matiec.git
+  TINYCC_REPO: https://repo.or.cz/tinycc.git
+  # Bump CACHE_VERSION to invalidate source caches
+  CACHE_VERSION: "v2"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Build matrix — one job per target platform (native runners preferred)
+  # ---------------------------------------------------------------------------
+  build:
+    name: toolchain (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            runner: ubuntu-24.04
+            archive: softplc-toolchain-linux-x64
+            cross: false
+
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+            archive: softplc-toolchain-linux-arm64
+            cross: false
+
+          # ARMv7 cross-compiled from x64 Ubuntu
+          - target: linux-arm
+            runner: ubuntu-24.04
+            archive: softplc-toolchain-linux-arm
+            cross: true
+            cross_packages: gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
+
+          - target: macos-arm64
+            runner: macos-14
+            archive: softplc-toolchain-macos-arm64
+            cross: false
+
+          - target: win32-x64
+            runner: windows-2022
+            archive: softplc-toolchain-win32-x64
+            cross: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Filter platform (workflow_dispatch)
+        id: filter
+        shell: bash
+        run: |
+          WANT="${{ github.event.inputs.platforms }}"
+          TARGET="${{ matrix.target }}"
+          if [ -z "$WANT" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if echo ",$WANT," | grep -qi ",${TARGET},"; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping ${TARGET} (not in: $WANT)"
+          fi
+
+      - name: Install Linux deps
+        if: runner.os == 'Linux' && steps.filter.outputs.run == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential git autoconf automake flex bison \
+            ca-certificates
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            sudo apt-get install -y --no-install-recommends ${{ matrix.cross_packages }}
+          fi
+
+      - name: Install macOS deps
+        if: runner.os == 'macOS' && steps.filter.outputs.run == 'true'
+        run: |
+          brew update
+          brew install autoconf automake flex bison make
+          echo "$(brew --prefix bison)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix flex)/bin" >> "$GITHUB_PATH"
+
+      - name: Install Windows deps (MSYS2)
+        if: runner.os == 'Windows' && steps.filter.outputs.run == 'true'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git
+            make
+            autoconf
+            automake
+            flex
+            bison
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-toolchain
+
+      - name: Cache MatIEC sources
+        if: steps.filter.outputs.run == 'true'
+        uses: actions/cache@v4
+        with:
+          path: _ci_cache/matiec_src
+          key: matiec-${{ env.CACHE_VERSION }}-${{ runner.os }}-${{ hashFiles('.github/workflows/build-toolchain.yml') }}
+          restore-keys: |
+            matiec-${{ env.CACHE_VERSION }}-${{ runner.os }}-
+            matiec-${{ env.CACHE_VERSION }}-
+
+      - name: Cache TinyCC sources
+        if: steps.filter.outputs.run == 'true'
+        uses: actions/cache@v4
+        with:
+          path: _ci_cache/tinycc_src
+          key: tinycc-${{ env.CACHE_VERSION }}-${{ runner.os }}-${{ hashFiles('.github/workflows/build-toolchain.yml') }}
+          restore-keys: |
+            tinycc-${{ env.CACHE_VERSION }}-${{ runner.os }}-
+            tinycc-${{ env.CACHE_VERSION }}-
+
+      - name: Prepare sources cache dirs
+        if: steps.filter.outputs.run == 'true'
+        shell: bash
+        run: |
+          mkdir -p _ci_cache
+          if [ ! -d _ci_cache/matiec_src/.git ]; then
+            git clone --depth 1 "${MATIEC_REPO}" _ci_cache/matiec_src
+          else
+            git -C _ci_cache/matiec_src fetch --depth 1 origin || true
+            git -C _ci_cache/matiec_src pull --ff-only || true
+          fi
+          if [ ! -d _ci_cache/tinycc_src/.git ]; then
+            git clone --depth 1 "${TINYCC_REPO}" _ci_cache/tinycc_src
+          else
+            git -C _ci_cache/tinycc_src fetch --depth 1 origin || true
+            git -C _ci_cache/tinycc_src pull --ff-only || true
+          fi
+
+      # ---------- Unix build (Linux + macOS) ----------
+      - name: Build toolchain (Unix)
+        if: runner.os != 'Windows' && steps.filter.outputs.run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="${GITHUB_WORKSPACE}"
+          export WORK_DIR="${ROOT}/_build_work"
+          export OUT_DIR="${ROOT}/bin"
+          mkdir -p "${WORK_DIR}" "${OUT_DIR}"
+
+          # Seed work dir from cache (script will reuse if present)
+          rm -rf "${WORK_DIR}/matiec_src" "${WORK_DIR}/tinycc_src"
+          cp -a _ci_cache/matiec_src "${WORK_DIR}/matiec_src"
+          cp -a _ci_cache/tinycc_src "${WORK_DIR}/tinycc_src"
+
+          chmod +x scripts/build_toolchain.sh
+          ./scripts/build_toolchain.sh "${{ matrix.target }}"
+
+          echo "=== Output tree ==="
+          find bin -type f | sort
+          du -sh bin/* || true
+
+      # ---------- Windows build via MSYS2 ----------
+      - name: Build toolchain (Windows / MSYS2)
+        if: runner.os == 'Windows' && steps.filter.outputs.run == 'true'
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          ROOT="$(pwd)"
+          export WORK_DIR="${ROOT}/_build_work"
+          export OUT_DIR="${ROOT}/bin"
+          mkdir -p "${WORK_DIR}" "${OUT_DIR}"
+
+          rm -rf "${WORK_DIR}/matiec_src" "${WORK_DIR}/tinycc_src"
+          cp -a _ci_cache/matiec_src "${WORK_DIR}/matiec_src"
+          cp -a _ci_cache/tinycc_src "${WORK_DIR}/tinycc_src"
+
+          # Native win32-x64 build inside MINGW64
+          export PATH="/mingw64/bin:/usr/bin:$PATH"
+          chmod +x scripts/build_toolchain.sh
+          # Force win32 target; script detects MSYSTEM but we pass explicitly
+          ./scripts/build_toolchain.sh win32-x64
+
+          find bin -type f | sort
+          du -sh bin/* || true
+
+      - name: Package platform archive
+        if: steps.filter.outputs.run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET="${{ matrix.target }}"
+          ARCHIVE="${{ matrix.archive }}"
+          mkdir -p dist
+
+          # Layout inside zip:
+          #   bin/<target>/{iec2c,tcc,tcc_runtime/...}
+          #   bin/matiec/lib/...
+          if [ ! -d "bin/${TARGET}" ]; then
+            echo "Missing bin/${TARGET}"
+            ls -laR bin || true
+            exit 1
+          fi
+          if [ ! -d "bin/matiec/lib" ]; then
+            echo "Missing bin/matiec/lib"
+            exit 1
+          fi
+
+          # Portable zip (no absolute paths)
+          (
+            cd bin
+            if [ "${{ runner.os }}" = "Windows" ]; then
+              7z a -tzip "../dist/${ARCHIVE}.zip" "${TARGET}" "matiec"
+            else
+              zip -r -y "../dist/${ARCHIVE}.zip" "${TARGET}" "matiec"
+            fi
+          )
+          ls -lh "dist/${ARCHIVE}.zip"
+          # checksum
+          if command -v sha256sum >/dev/null; then
+            (cd dist && sha256sum "${ARCHIVE}.zip" > "${ARCHIVE}.zip.sha256")
+          elif command -v shasum >/dev/null; then
+            (cd dist && shasum -a 256 "${ARCHIVE}.zip" > "${ARCHIVE}.zip.sha256")
+          fi
+          cat "dist/${ARCHIVE}.zip.sha256" || true
+
+      - name: Upload artifact
+        if: steps.filter.outputs.run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.archive }}
+          path: |
+            dist/${{ matrix.archive }}.zip
+            dist/${{ matrix.archive }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  # Optional: combined "all platforms" bundle for convenience
+  # ---------------------------------------------------------------------------
+  bundle:
+    name: bundle-all
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: softplc-toolchain-*
+          merge-multiple: false
+
+      - name: List downloaded
+        run: find artifacts -type f | sort
+
+      - name: Make combined archive
+        run: |
+          set -euo pipefail
+          mkdir -p combined/bin dist
+          # Each artifact is a folder softplc-toolchain-<platform>/ containing zip
+          for dir in artifacts/softplc-toolchain-*; do
+            [ -d "$dir" ] || continue
+            zipfile="$(find "$dir" -name '*.zip' | head -1)"
+            [ -n "$zipfile" ] || continue
+            echo "Merging $zipfile"
+            unzip -o -q "$zipfile" -d combined/bin
+          done
+          # After merge: combined/bin/linux-x64, linux-arm64, ..., matiec/
+          (
+            cd combined
+            zip -r -y ../dist/softplc-toolchain-all.zip bin
+          )
+          (cd dist && sha256sum softplc-toolchain-all.zip > softplc-toolchain-all.zip.sha256)
+          ls -lh dist/
+          find combined/bin -maxdepth 2 -type d | sort
+
+      - name: Upload combined artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: softplc-toolchain-all
+          path: |
+            dist/softplc-toolchain-all.zip
+            dist/softplc-toolchain-all.zip.sha256
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  # GitHub Release on tags / manual tag input
+  # ---------------------------------------------------------------------------
+  release:
+    name: github-release
+    needs: [build, bundle]
+    runs-on: ubuntu-24.04
+    if: >
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag != '')
+    steps:
+      - name: Resolve tag name
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.release_tag }}" ]; then
+            echo "name=${{ github.event.inputs.release_tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Flatten assets
+        run: |
+          set -euo pipefail
+          mkdir -p assets
+          find release-assets -type f \( -name '*.zip' -o -name '*.sha256' \) -print0 \
+            | while IFS= read -r -d '' f; do
+                cp -v "$f" assets/
+              done
+          ls -lh assets/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.name }}
+          name: SoftPLC Toolchain ${{ steps.tag.outputs.name }}
+          draft: false
+          prerelease: ${{ contains(steps.tag.outputs.name, '-') }}
+          generate_release_notes: true
+          body: |
+            ## SoftPLC Toolchain ${{ steps.tag.outputs.name }}
+
+            Pre-built **iec2c** (MatIEC) + **tcc** (TinyCC) binaries for SoftPLC Runtime.
+
+            ### Downloads
+
+            | Archive | Platform |
+            |---------|----------|
+            | `softplc-toolchain-linux-x64.zip` | Linux x86_64 |
+            | `softplc-toolchain-linux-arm64.zip` | Linux aarch64 (Pi 4/5, …) |
+            | `softplc-toolchain-linux-arm.zip` | Linux ARMv7 |
+            | `softplc-toolchain-macos-arm64.zip` | macOS Apple Silicon |
+            | `softplc-toolchain-win32-x64.zip` | Windows x64 |
+            | `softplc-toolchain-all.zip` | All platforms combined |
+
+            ### Install
+
+            ```bash
+            # Example: Linux x64
+            unzip softplc-toolchain-linux-x64.zip -d SoftPLC/
+            # results in SoftPLC/bin/linux-x64/{iec2c,tcc,tcc_runtime} and SoftPLC/bin/matiec/lib
+            ```
+
+            Each zip contains:
+            ```
+            <platform>/iec2c[.exe]
+            <platform>/tcc[.exe]
+            <platform>/tcc_runtime/
+            matiec/lib/
+            ```
+
+            Place extracted `bin/` under the SoftPLC project root (merge with existing `bin/`).
+          files: |
+            assets/*.zip
+            assets/*.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
