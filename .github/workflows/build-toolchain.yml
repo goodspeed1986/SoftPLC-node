@@ -72,7 +72,7 @@ jobs:
             cross_packages: gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
 
           - target: macos-arm64
-            runner: macos-14
+            runner: macos-15
             archive: softplc-toolchain-macos-arm64
             cross: false
 
